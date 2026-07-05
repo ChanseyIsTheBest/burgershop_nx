@@ -14,11 +14,11 @@ you legally own (see below). Nothing copyrighted is distributed here.
 You must own Burger Shop on Android. From your copy (the APK and/or the installed
 app), extract these three files:
 
-| File from the APK            | Where it lives in the APK         | Put it on the SD card as |
+| Files needed           | Where it lives in the APK         | Put it on the SD card as |
 |------------------------------|-----------------------------------|--------------------------|
-| `libSexyAndroid.so` (arm64)  | `lib/arm64-v8a/libSexyAndroid.so` | `libSexyAndroid.so`      |
-| `libbass.so` (arm64)         | `lib/arm64-v8a/libbass.so`        | `libbass.so`             |
-| `pakfiletable.wmv`           | `assets/pakfiletable.wmv`         | `pakfiletable.wmv`  
+| `libSexyAndroid.so` (slit_config.arm64_v8a)  | `lib/arm64-v8a/libSexyAndroid.so` | `libSexyAndroid.so`      |
+| `libbass.so` (split_config.arm64_v8a)         | `lib/arm64-v8a/libbass.so`        | `libbass.so`             |
+| `pakfiletable.wmv` (base.apk) | `assets/pakfiletable.wmv`         | `pakfiletable.wmv`  
 
 ## SD card layout
 
