@@ -322,14 +322,34 @@ static uint32_t (*r_flags)(uint32_t, uint32_t, uint32_t);
 static uint32_t (*r_screatefile)(int, const void *, uint64_t, uint64_t, uint32_t);
 static uint32_t (*r_screate)(uint32_t, uint32_t, uint32_t, void *, void *);
 static uint32_t (*r_screateuser)(uint32_t, uint32_t, const void *, void *);
+static uint32_t (*r_isactive)(uint32_t);
+
+// The music (an HSTREAM, handle class 0x8000xxxx) is meant to loop, but the
+// game drives looping through a playback-time END-sync callback that never
+// fires under our custom OpenSL output. So we loop it ourselves: remember which
+// music stream is currently playing, and if it stops on its own -- i.e. reached
+// its end, as opposed to the game stopping it for a level change -- restart it.
+static uint32_t s_music_handle = 0;
+#define BASS_ACTIVE_STOPPED 0u
+
+static int is_music_stream(uint32_t h) { return (h & 0xC0000000u) == 0x80000000u; }
+
+// Called once per frame from the render loop. Cheap: one BASS_ChannelIsActive
+// query, and a restart only at the instant a track ends.
+void bass_music_keepalive(void) {
+  if (!s_music_handle || !r_isactive) return;
+  if (r_isactive(s_music_handle) == BASS_ACTIVE_STOPPED) {
+    if (r_play) r_play(s_music_handle, 1);   // restart=TRUE -> seek to 0 + play
+  }
+}
 
 void bass_hook_set_reals(uintptr_t play, uintptr_t stop, uintptr_t setsync,
                          uintptr_t setpos, uintptr_t flags, uintptr_t screatefile,
-                         uintptr_t screate, uintptr_t screateuser) {
+                         uintptr_t screate, uintptr_t screateuser, uintptr_t isactive) {
   r_play = (void *)play; r_stop = (void *)stop; r_setsync = (void *)setsync;
   r_setpos = (void *)setpos; r_flags = (void *)flags;
   r_screatefile = (void *)screatefile; r_screate = (void *)screate;
-  r_screateuser = (void *)screateuser;
+  r_screateuser = (void *)screateuser; r_isactive = (void *)isactive;
 }
 
 static uint32_t w_BASS_StreamCreateFile(int mem, const void *file, uint64_t off,
@@ -399,23 +419,16 @@ static uint32_t w_BASS_StreamCreateFileUser(uint32_t sys, uint32_t flags,
 }
 static uint32_t w_BASS_ChannelPlay(uint32_t h, int restart) {
   debugPrintf("BASS_ChannelPlay(h=%u restart=%d)\n", h, restart);
+  if (is_music_stream(h)) s_music_handle = h;  // this is the track to keep looping
   return r_play ? r_play(h, restart) : 0;
 }
 static int w_BASS_ChannelStop(uint32_t h) {
   debugPrintf("BASS_ChannelStop(h=%u)\n", h);
+  if (h == s_music_handle) s_music_handle = 0; // stopped on purpose -> don't loop it
   return r_stop ? r_stop(h) : 0;
 }
 static uint32_t w_BASS_ChannelSetSync(uint32_t h, uint32_t type, uint64_t param,
                                       void *proc, void *user) {
-  // The game loops/advances music via a BASS_SYNC_END callback, but it registers
-  // it as a *playback-time* sync (type 0x2, no MIXTIME bit). Playback-time syncs
-  // fire when BASS's output plays past the end, and our custom OpenSL output
-  // doesn't advance BASS's played position that way, so it never fires -- which
-  // is why music died after one play. Promote END syncs to MIXTIME so they fire
-  // from the decode side (driven by our per-frame BASS_Update). The game's own
-  // callback then loops the track and switches level tracks correctly.
-  if ((type & 0xffu) == 2u) // BASS_SYNC_END
-    type |= 0x20000000u;    // BASS_SYNC_MIXTIME
   debugPrintf("BASS_ChannelSetSync(h=%u type=0x%x param=%llu proc=%p)\n",
               h, type, (unsigned long long)param, proc);
   return r_setsync ? r_setsync(h, type, param, proc, user) : 0;

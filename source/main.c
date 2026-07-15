@@ -28,6 +28,8 @@
 #include <SDL2/SDL.h>
 
 #include "config.h"
+#include "libc_shim.h"
+#include "nx_pointer.h"
 #include "util.h"
 #include "error.h"
 #include "so_util.h"
@@ -97,10 +99,13 @@ static long check_data(void) {
 }
 
 static void set_screen_size(void) {
-  // Locked to the handheld panel: the game is touch-driven and touch only works
-  // in handheld mode, so there's no docked/resolution option.
-  screen_width  = 1280;
-  screen_height = 720;
+  // Render at 1080p in both handheld and docked. Docked shows it natively;
+  // handheld renders 1080p and the compositor downscales it to the 720p panel
+  // (supersampling -> sharper). The touchscreen still reports in 1280x720 panel
+  // space, and nx_pointer scales those touches up into this render space, so
+  // touch stays accurate; the stick/gyro/mouse cursor makes docked playable.
+  screen_width  = 1920;
+  screen_height = 1080;
   debugPrintf("screen mode: %dx%d\n", screen_width, screen_height);
 }
 
@@ -348,7 +353,8 @@ static void resolve_entry_points(void) {
       so_try_find_addr_rx(&bass_mod, "BASS_ChannelFlags"),
       so_try_find_addr_rx(&bass_mod, "BASS_StreamCreateFile"),
       so_try_find_addr_rx(&bass_mod, "BASS_StreamCreate"),
-      so_try_find_addr_rx(&bass_mod, "BASS_StreamCreateFileUser"));
+      so_try_find_addr_rx(&bass_mod, "BASS_StreamCreateFileUser"),
+      so_try_find_addr_rx(&bass_mod, "BASS_ChannelIsActive"));
 }
 
 // ---------------------------------------------------------------------------
@@ -364,63 +370,22 @@ static void resolve_entry_points(void) {
 #define ACTION_UP   200
 
 static void *thiz;
-static int touch_down = 0;
-static float last_x = 0, last_y = 0;
 
-static void update_touch(void) {
-  HidTouchScreenState st = {0};
-  const float sx = (float)screen_width / 1280.0f; // libnx panel is 1280x720
-  const float sy = (float)screen_height / 720.0f;
+// All pointer input -- touchscreen, stick-driven cursor, gyro pointing, and USB
+// mouse -- plus the on-screen cursor overlay are handled by the nx_pointer
+// module (see nx_pointer.{c,h}). Here we just drain its events each frame and
+// hand them to the engine as touch events, mapping phases to its action codes.
+static void nxp_log(const char *m) { debugPrintf("%s", (char *)m); }
 
-  if (hidGetTouchScreenStates(&st, 1) && st.count > 0) {
-    const float x = st.touches[0].x * sx;
-    const float y = st.touches[0].y * sy;
-    if (!touch_down) {
-      touch_down = 1;
-      e_SexyIOSTouchEvent(fake_env, thiz, ACTION_DOWN, 0, x, y);
-    } else if (x != last_x || y != last_y) {
-      e_SexyIOSTouchEvent(fake_env, thiz, ACTION_MOVE, 0, x, y);
-    }
-    last_x = x; last_y = y;
-  } else if (touch_down) {
-    touch_down = 0;
-    e_SexyIOSTouchEvent(fake_env, thiz, ACTION_UP, 0, last_x, last_y);
-  }
-}
-
-// emulate a pointer with the left stick + A so the game is playable docked,
-// without a touch screen. Kept off the touch-screen critical path.
-static PadState pad;
-static float cur_x, cur_y;
-static int cur_init = 0;
-static int btn_down = 0;
-
-static void update_stick_pointer(void) {
-  padUpdate(&pad);
-  if (!cur_init) { cur_x = screen_width * 0.5f; cur_y = screen_height * 0.5f; cur_init = 1; }
-  const HidAnalogStickState ls = padGetStickPos(&pad, 0);
-  const float dz = 0.15f * 32767.0f;
-  float dx = (fabsf((float)ls.x) > dz) ? (ls.x / 32767.0f) : 0.0f;
-  float dy = (fabsf((float)ls.y) > dz) ? (ls.y / 32767.0f) : 0.0f;
-  if (dx != 0.0f || dy != 0.0f) {
-    cur_x += dx * 12.0f;
-    cur_y -= dy * 12.0f; // stick up is +y on the pad, screen y grows downward
-    if (cur_x < 0) cur_x = 0;
-    if (cur_x > screen_width)  cur_x = screen_width;
-    if (cur_y < 0) cur_y = 0;
-    if (cur_y > screen_height) cur_y = screen_height;
-    if (btn_down)
-      e_SexyIOSTouchEvent(fake_env, thiz, ACTION_MOVE, 0, cur_x, cur_y);
-  }
-  const u64 down = padGetButtonsDown(&pad);
-  const u64 up   = padGetButtonsUp(&pad);
-  if ((down & HidNpadButton_A) && !btn_down) {
-    btn_down = 1;
-    e_SexyIOSTouchEvent(fake_env, thiz, ACTION_DOWN, 0, cur_x, cur_y);
-  }
-  if ((up & HidNpadButton_A) && btn_down) {
-    btn_down = 0;
-    e_SexyIOSTouchEvent(fake_env, thiz, ACTION_UP, 0, cur_x, cur_y);
+static void feed_pointer(void) {
+  nxp_update();
+  NxpEvent ev[16];
+  const int n = nxp_poll(ev, 16);
+  for (int i = 0; i < n; i++) {
+    const int action = (ev[i].phase == NXP_DOWN) ? ACTION_DOWN
+                     : (ev[i].phase == NXP_UP)   ? ACTION_UP
+                     :                             ACTION_MOVE;
+    e_SexyIOSTouchEvent(fake_env, thiz, action, ev[i].id, ev[i].x, ev[i].y);
   }
 }
 
@@ -572,11 +537,13 @@ static void applet_hook_fn(AppletHookType type, void *param) {
   if (type == AppletHookType_OnExitRequest) {
     persist_language();
     save_settings();
+    nxp_save_settings();
     jni_quit_requested = 1;
   } else if (type == AppletHookType_OnFocusState) {
     if (appletGetFocusState() != AppletFocusState_InFocus) {
       persist_language();
       save_settings();
+      nxp_save_settings();
     }
   }
 }
@@ -602,9 +569,19 @@ int main(void) {
   if (!egl_init())
     fatal_error("Failed to create an OpenGL ES context.");
 
-  padConfigureInput(8, HidNpadStyleSet_NpadStandard);
-  padInitializeAny(&pad);
-  hidInitializeTouchScreen();
+  // Pointer input + on-screen cursor (touch, stick cursor, gyro, USB mouse).
+  // nx_pointer owns the pad/touchscreen/mouse HID, so we don't init them here.
+  static NxpConfig pcfg;
+  memset(&pcfg, 0, sizeof(pcfg));
+  pcfg.screen_w = screen_width;  pcfg.screen_h = screen_height; // 1280x720
+  pcfg.panel_w  = 1280;          pcfg.panel_h  = 720;           // Switch touch panel
+  pcfg.data_dir = ".";           // cursor.png / pointer.cfg next to the .nro
+  pcfg.cursor_id = 8;            // cursor pointer id (touch uses 0)
+  pcfg.max_touch_slots = 8;
+  pcfg.log       = nxp_log;
+  pcfg.fopen_fn  = fopen_fake;   // route settings I/O through the port's fopen
+  pcfg.fclose_fn = fclose;
+  nxp_init(&pcfg);
 
   debugPrintf("heap: newlib %u MB, .so zone %u KB at %p\n",
       MEMORY_MB, (unsigned)(heap_so_limit / 1024), heap_so_base);
@@ -642,8 +619,7 @@ int main(void) {
   const u64 frame_ticks = armNsToTicks(1000000000ull / 60);
   u64 frame_deadline = armGetSystemTick() + frame_ticks;
   while (appletMainLoop() && !jni_quit_requested) {
-    update_touch();
-    update_stick_pointer();
+    feed_pointer();
     handle_keyboard();
 
     // Decode streams ahead into their playback buffers, like the Android glue
@@ -653,10 +629,12 @@ int main(void) {
     // over-render, and calling it alongside any auto-update thread is safe.
     if (e_BASS_Update)
       e_BASS_Update(200);
+    bass_music_keepalive(); // loop the music if it ended
 
     const u64 t0 = armGetSystemTick();
     e_nativeRender(fake_env, thiz);
     const u64 t1 = armGetSystemTick();
+    nxp_draw(); // cursor overlay on top of the finished frame
     eglSwapBuffers(s_display, s_surface);
     const u64 t2 = armGetSystemTick();
 
@@ -715,6 +693,7 @@ int main(void) {
   // shutdown path, which Switch homebrew often doesn't get to run.
   persist_language();
   save_settings();
+  nxp_save_settings(); // flush any pending pointer.cfg write
   if (e_NativeNotifyAppEnteredBackground)
     e_NativeNotifyAppEnteredBackground(fake_env, thiz);
   debugLogFlush();

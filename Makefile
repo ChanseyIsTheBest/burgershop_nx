@@ -13,7 +13,7 @@ include $(DEVKITPRO)/libnx/switch_rules
 TARGET		:=	$(notdir $(CURDIR))
 APP_TITLE	:=	Burger Shop
 APP_AUTHOR	:=	ChanseyIsTheBest
-APP_VERSION	:=	1.0.0
+APP_VERSION	:=	1.0.1
 BUILD		:=	build
 SOURCES		:=	source
 DATA		:=	data
@@ -39,7 +39,7 @@ LDFLAGS	=	-specs=$(DEVKITPRO)/libnx/switch.specs -g $(ARCH) -Wl,-Map,$(notdir $*
 # pulled in by mesa. The engine statically bundles its own libpng/libjpeg/zlib,
 # and decodes all images + renders all fonts natively, so none of FreeType,
 # libpng, ffmpeg or dav1d are needed here (unlike the FF4 donor port).
-LIBS	:= -lSDL2 -lGLESv1_CM -lGLESv2 -lEGL -lglapi -ldrm_nouveau -lnx -lm
+LIBS	:= -lSDL2 -lGLESv1_CM -lGLESv2 -lEGL -lglapi -ldrm_nouveau -lpng -lz -lnx -lm
 
 #---------------------------------------------------------------------------------
 # list of directories containing libraries, this must be the top level containing

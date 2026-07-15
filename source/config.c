@@ -6,8 +6,9 @@
  * of the MIT license. See the LICENSE file for details.
  */
 
-// The game requires the touchscreen, which only exists in handheld mode, so the
-// port is locked to the handheld panel (1280x720). There are no user-facing
-// resolution options -- docked would be unplayable (no touch).
-int screen_width  = 1280;
-int screen_height = 720;
+// Render at 1080p in both handheld and docked (set_screen_size in main.c). The
+// touchscreen (handheld only) reports in 1280x720 panel space; nx_pointer scales
+// touches into this render space, and its stick/gyro/mouse cursor makes docked
+// playable too.
+int screen_width  = 1920;
+int screen_height = 1080;
