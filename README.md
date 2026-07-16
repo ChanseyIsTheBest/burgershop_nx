@@ -50,6 +50,30 @@ A USB mouse works in both handheld and docked: move to control the cursor, left-
 sensitivity.
 Your stick, mouse and gyro sensitivities are remembered in `pointer.cfg` automatically after in-game adjustment.
 
+## Languages
+On first launch the wrapper writes `sdmc:/switch/angrybirds/config.txt`
+(one `name value` per line, `#` for comments):
+ 
+```
+# language: 'auto' follows the Switch system language, or one of the codes in
+# the table below (e.g. fr, de, es, es_419, pt, ru, ja, zh, zh_TW). 
+```
+
+| `language=` | Game locale | UI text |
+|---|---|---|
+| `auto` | follows the Switch system language | — |
+| `en` | en_EN | English (no patch — stock) |
+| `fr` | fr_FR | French |
+| `it` | it_IT | Italian |
+| `de` | de_DE | German |
+| `es` | es_ES | Spanish (Spain) |
+| `es_419` | es_419 | Latin-American Spanish |
+| `pt` | pt_BR | Brazilian Portuguese |
+| `ru` | ru_RU | Russian |
+| `ja` | ja_JP | Japanese |
+| `zh` | zh_CN | Simplified Chinese |
+| `zh_TW` | zh_TW | Traditional Chinese |
+
 ## Building
 
 Requires [devkitPro](https://devkitpro.org/wiki/Getting_Started) with the
@@ -69,9 +93,22 @@ your own copy. Burger Shop, SexyAppFramework and BASS are the property of their
 respective owners. BASS (un4seen) is free for non-commercial use; respect its
 license for any redistribution.
 
-## Credits
 
-- ELF loader, bionic shim layer, OpenSL ES shim and JNI scaffolding adapted from
-  the FF4: The After Years Switch port (fgsfds, Andy Nguyen) and the broader
-  max_nx / TheOfficialFloW lineage.
-```
+## Credits
+ 
+The loader/shim infrastructure (`so_util`, `libc_shim`, `util`, `error`) derives
+from the open-source Switch port of *Burger Shop* by Andy Nguyen, fgsfds and
+ChanseyIsTheBest, which in turn builds on TheOfficialFloW's Vita/Switch loader
+lineage — all MIT-licensed. The Fusion-specific JNI, platform callbacks, audio,
+imports and main loop in this project are new. Thanks to everyone in that
+lineage for making this approach possible.
+ 
+The on-boot language patcher vendors two public-domain libraries, unmodified
+except for build configuration: the **LZMA SDK** by Igor Pavlov
+(`LzmaDec.c`, `LzmaEnc.c`, `LzFind.c`, `Alloc.c` and headers) for the game's
+script (de)compression, and **tiny-AES-c** by kokke (`aes.c`/`aes.h`, set to
+AES-256) for the AES-CBC layer. Both are public domain; the sources live in
+`source/` alongside the wrapper. `lzma_alone.c`, `patch_bytecode.c` and
+`locale_patch.c` (the LZMA-alone framing, Lua-bytecode edit, and boot logic) are
+new to this project.
+ 
